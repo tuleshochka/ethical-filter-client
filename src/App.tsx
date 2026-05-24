@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Layout, Input, Button, List, Avatar, Space, Typography, Badge, ConfigProvider, Tooltip } from 'antd';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Layout, Input, Button, List, Avatar, Space, Typography, Badge, ConfigProvider, Tooltip, Tag } from 'antd';
 import { 
   SendOutlined, 
   UserOutlined, 
@@ -8,26 +8,82 @@ import {
   DeleteOutlined,
   MessageOutlined,
   LockOutlined,
-  CheckCircleOutlined
+  SafetyCertificateOutlined,
+  LoadingOutlined
 } from '@ant-design/icons';
+import type { ThemeConfig } from 'antd';
 
 const { Header, Sider, Content } = Layout;
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 const { TextArea } = Input;
 
-// Premium light mode styling tokens (matching the admin panel for cohesion)
-const clientTheme = {
+// ────────────────────────── Types ──────────────────────────
+
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  strategy?: string;
+  isStreaming?: boolean;
+}
+
+interface ChatSession {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+}
+
+interface WSStrategyMessage {
+  type: 'strategy';
+  strategy: string;
+  pii_detected: boolean;
+}
+
+interface WSTokenMessage {
+  type: 'token';
+  content: string;
+}
+
+interface WSMetadataMessage {
+  type: 'metadata';
+  strategy: string;
+  scores: Record<string, number>;
+  latency_ms: number;
+  is_mock: boolean;
+  bypassed: boolean;
+}
+
+interface WSErrorMessage {
+  type: 'error';
+  content: string;
+}
+
+type WSMessage = WSStrategyMessage | WSTokenMessage | WSMetadataMessage | WSErrorMessage;
+
+// ──────────────────── Strategy Visuals ────────────────────
+
+const STRATEGY_META: Record<string, { color: string; label: string }> = {
+  ALLOW:    { color: 'success',    label: 'Разрешено' },
+  SOFTEN:   { color: 'processing', label: 'Смягчение' },
+  CAUTION:  { color: 'warning',    label: 'Предупреждение' },
+  CLARIFY:  { color: 'blue',       label: 'Уточнение' },
+  REDIRECT: { color: 'purple',     label: 'Перенаправление' },
+  REFUSE:   { color: 'error',      label: 'Отказ' },
+};
+
+// ────────────────────── Theme ──────────────────────────────
+
+const clientTheme: ThemeConfig = {
   token: {
-    colorPrimary: '#4f46e5', // Beautiful Indigo
-    colorSuccess: '#10b981', // Emerald green
-    colorWarning: '#f59e0b', // Amber yellow
-    colorError: '#ef4444',   // Rose red
-    colorInfo: '#3b82f6',    // Sky blue
+    colorPrimary: '#4f46e5',
+    colorSuccess: '#10b981',
+    colorWarning: '#f59e0b',
+    colorError: '#ef4444',
+    colorInfo: '#3b82f6',
     borderRadius: 8,
     fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
-    colorBgLayout: '#f8fafc', // Very light grey bg
-    colorBgContainer: '#ffffff', // Pure white card bg
-    colorText: '#0f172a',    // Dark slate text
+    colorBgLayout: '#f8fafc',
+    colorBgContainer: '#ffffff',
+    colorText: '#0f172a',
     colorTextSecondary: '#475569',
   },
   components: {
@@ -39,27 +95,52 @@ const clientTheme = {
   }
 };
 
-function App() {
-  const [sessions, setSessions] = useState(() => {
-    const saved = localStorage.getItem('chat_sessions');
-    return saved ? JSON.parse(saved) : [
-      { id: '1', title: 'Новый диалог', messages: [
-        { role: 'assistant', content: 'Привет! Я ваш корпоративный ИИ-ассистент. Моя работа защищена адаптивным контекстным шлюзом безопасности. Напишите ваш запрос, и я постараюсь помочь вам в рамках правил безопасности организации.' }
-      ]}
-    ];
-  });
-  
-  const [activeSessionId, setActiveSessionId] = useState(() => {
-    return sessions[0]?.id || '1';
+// ────────────────────── Constants ─────────────────────────
+
+const INITIAL_MESSAGE: ChatMessage = {
+  role: 'assistant',
+  content: 'Привет! Я ваш корпоративный ИИ-ассистент. Моя работа защищена адаптивным контекстным шлюзом безопасности. Напишите ваш запрос, и я постараюсь помочь вам в рамках правил безопасности организации.'
+};
+
+function createDefaultSession(): ChatSession {
+  return {
+    id: Date.now().toString(),
+    title: 'Новый диалог',
+    messages: [INITIAL_MESSAGE]
+  };
+}
+
+// ────────────────────── Component ─────────────────────────
+
+function App(): React.ReactElement {
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
+    try {
+      const saved = localStorage.getItem('chat_sessions');
+      if (saved) {
+        const parsed = JSON.parse(saved) as ChatSession[];
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch { /* ignore */ }
+    return [createDefaultSession()];
   });
 
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => sessions[0]?.id ?? '1');
   const [inputVal, setInputVal] = useState('');
-  const [streamingMessage, setStreamingMessage] = useState(null);
+  const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
+  const [currentStrategy, setCurrentStrategy] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
-  const [ws, setWs] = useState(null);
 
-  const chatEndRef = useRef(null);
-  const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0];
+  // Refs for stable WebSocket access
+  const wsRef = useRef<WebSocket | null>(null);
+  const activeSessionIdRef = useRef(activeSessionId);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const activeSession = sessions.find(s => s.id === activeSessionId) ?? sessions[0];
+
+  // Keep ref in sync
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
 
   // Save sessions to localStorage
   useEffect(() => {
@@ -71,29 +152,44 @@ function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeSession?.messages, streamingMessage]);
 
-  // Setup WebSocket connection
+  // ─── WebSocket lifecycle (single connection, no dependency on sessionId) ───
   useEffect(() => {
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+    let isMounted = true;
+
     const connectWs = () => {
-      const socket = new WebSocket('ws://localhost:8000/api/v1/chat/ws');
-      
+      if (!isMounted) return;
+
+      const socket = new WebSocket('ws://127.0.0.1:8000/api/v1/chat/ws');
+
       socket.onopen = () => {
         console.log('WebSocket connected');
       };
-      
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        
-        if (data.type === 'token') {
-          setStreamingMessage(prev => (prev === null ? data.content : prev + data.content));
-        } 
+
+      socket.onmessage = (event: MessageEvent) => {
+        const data = JSON.parse(event.data) as WSMessage;
+
+        if (data.type === 'strategy') {
+          setCurrentStrategy((data as WSStrategyMessage).strategy);
+        }
+        else if (data.type === 'token') {
+          setStreamingMessage(prev =>
+            prev === null ? (data as WSTokenMessage).content : prev + (data as WSTokenMessage).content
+          );
+        }
         else if (data.type === 'metadata') {
+          const meta = data as WSMetadataMessage;
           setStreamingMessage(currentStream => {
             if (currentStream !== null) {
               setSessions(prevSessions => prevSessions.map(session => {
-                if (session.id === activeSessionId) {
+                if (session.id === activeSessionIdRef.current) {
                   return {
                     ...session,
-                    messages: [...session.messages, { role: 'assistant', content: currentStream }]
+                    messages: [...session.messages, {
+                      role: 'assistant' as const,
+                      content: currentStream,
+                      strategy: meta.strategy,
+                    }]
                   };
                 }
                 return session;
@@ -102,83 +198,87 @@ function App() {
             return null;
           });
           setIsSending(false);
-        } 
+          setCurrentStrategy(null);
+        }
         else if (data.type === 'error') {
-          console.error('WS Error:', data.content);
+          const errMsg = (data as WSErrorMessage).content;
+          console.error('WS Error:', errMsg);
           setSessions(prevSessions => prevSessions.map(session => {
-            if (session.id === activeSessionId) {
+            if (session.id === activeSessionIdRef.current) {
               return {
                 ...session,
-                messages: [...session.messages, { role: 'assistant', content: `[Ошибка: ${data.content}]` }]
+                messages: [...session.messages, { role: 'assistant' as const, content: `[Ошибка: ${errMsg}]` }]
               };
             }
             return session;
           }));
           setIsSending(false);
+          setStreamingMessage(null);
+          setCurrentStrategy(null);
         }
       };
-      
+
       socket.onclose = () => {
         console.log('WebSocket disconnected, retrying in 3s...');
-        setTimeout(connectWs, 3000);
+        if (isMounted) {
+          reconnectTimeout = setTimeout(connectWs, 3000);
+        }
       };
 
-      setWs(socket);
+      wsRef.current = socket;
     };
 
     connectWs();
 
     return () => {
-      if (ws) ws.close();
+      isMounted = false;
+      clearTimeout(reconnectTimeout);
+      wsRef.current?.close();
+      wsRef.current = null;
     };
-  }, [activeSessionId]);
+  }, []); // ← Empty deps: single WS for entire app lifecycle
 
-  const handleSend = () => {
+  // ─── Handlers ───
+
+  const handleSend = useCallback(() => {
     if (!inputVal.trim() || isSending) return;
-    
+
     const userText = inputVal.trim();
     setInputVal('');
     setIsSending(true);
-    setStreamingMessage(''); // Init stream
-    
+    setStreamingMessage('');
+
     // Add user message to session
     setSessions(prev => prev.map(session => {
       if (session.id === activeSessionId) {
-        const updatedMsgs = [...session.messages, { role: 'user', content: userText }];
-        // Automatically set title based on first user query
+        const updatedMsgs: ChatMessage[] = [...session.messages, { role: 'user', content: userText }];
         let title = session.title;
         if (session.title === 'Новый диалог' && session.messages.length === 1) {
           title = userText.slice(0, 24) + (userText.length > 24 ? '...' : '');
         }
-        return {
-          ...session,
-          title,
-          messages: updatedMsgs
-        };
+        return { ...session, title, messages: updatedMsgs };
       }
       return session;
     }));
 
-    // Prepare history payload for backend (exclude system error labels)
-    const history = activeSession.messages
+    // Prepare history payload (exclude error messages)
+    const history = (activeSession?.messages ?? [])
       .filter(msg => !msg.content.startsWith('[Ошибка:'))
-      .map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
+      .map(msg => ({ role: msg.role, content: msg.content }));
 
+    const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        message: userText,
-        history: history
-      }));
+      ws.send(JSON.stringify({ message: userText, history }));
     } else {
       console.error('WS not connected');
       setSessions(prev => prev.map(session => {
         if (session.id === activeSessionId) {
           return {
             ...session,
-            messages: [...session.messages, { role: 'assistant', content: '[Ошибка соединения: Веб-сокет не активен. Подключаюсь к серверу...]' }]
+            messages: [...session.messages, {
+              role: 'assistant' as const,
+              content: '[Ошибка соединения: Веб-сокет не активен. Подключаюсь к серверу...]'
+            }]
           };
         }
         return session;
@@ -186,31 +286,20 @@ function App() {
       setIsSending(false);
       setStreamingMessage(null);
     }
-  };
+  }, [inputVal, isSending, activeSessionId, activeSession]);
 
-  const createNewSession = () => {
-    const newId = Date.now().toString();
-    const newSession = {
-      id: newId,
-      title: 'Новый диалог',
-      messages: [
-        { role: 'assistant', content: 'Привет! Я готов помочь вам в рамках правил безопасности организации. Задайте ваш вопрос.' }
-      ]
-    };
+  const createNewSession = useCallback(() => {
+    const newSession = createDefaultSession();
     setSessions(prev => [newSession, ...prev]);
-    setActiveSessionId(newId);
-  };
+    setActiveSessionId(newSession.id);
+  }, []);
 
-  const deleteSession = (id, e) => {
+  const deleteSession = useCallback((id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (sessions.length === 1) {
-      // Don't delete last, just clear it
-      setSessions([
-        { id: '1', title: 'Новый диалог', messages: [
-          { role: 'assistant', content: 'Привет! Я готов помочь вам в рамках правил безопасности организации. Задайте ваш вопрос.' }
-        ]}
-      ]);
-      setActiveSessionId('1');
+      const fresh = createDefaultSession();
+      setSessions([fresh]);
+      setActiveSessionId(fresh.id);
       return;
     }
     const updated = sessions.filter(s => s.id !== id);
@@ -218,6 +307,23 @@ function App() {
     if (activeSessionId === id) {
       setActiveSessionId(updated[0].id);
     }
+  }, [sessions, activeSessionId]);
+
+  // ─── Render ───
+
+  const renderStrategyBadge = (strategy?: string) => {
+    if (!strategy || strategy === 'ALLOW') return null;
+    const meta = STRATEGY_META[strategy];
+    if (!meta) return null;
+    return (
+      <Tag
+        color={meta.color}
+        style={{ fontSize: '11px', marginTop: '6px', borderRadius: '4px' }}
+        icon={<SafetyCertificateOutlined />}
+      >
+        Стратегия: {meta.label}
+      </Tag>
+    );
   };
 
   return (
@@ -258,7 +364,7 @@ function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px 8px' }}>
             <List
               dataSource={sessions}
-              renderItem={item => (
+              renderItem={(item: ChatSession) => (
                 <div 
                   onClick={() => setActiveSessionId(item.id)}
                   style={{
@@ -273,7 +379,6 @@ function App() {
                     alignItems: 'center',
                     justifyContent: 'space-between'
                   }}
-                  className="session-item"
                 >
                   <Space style={{ minWidth: 0, overflow: 'hidden' }}>
                     <MessageOutlined style={{ flexShrink: 0 }} />
@@ -373,10 +478,12 @@ function App() {
             }}>
               <List
                 dataSource={[
-                  ...(activeSession?.messages || []),
-                  ...(streamingMessage !== null ? [{ role: 'assistant', content: streamingMessage, isStreaming: true }] : [])
+                  ...(activeSession?.messages ?? []),
+                  ...(streamingMessage !== null
+                    ? [{ role: 'assistant' as const, content: streamingMessage, isStreaming: true, strategy: currentStrategy ?? undefined }]
+                    : [])
                 ]}
-                renderItem={(item) => (
+                renderItem={(item: ChatMessage) => (
                   <div 
                     style={{ 
                       display: 'flex',
@@ -401,20 +508,26 @@ function App() {
                           flexShrink: 0
                         }} 
                       />
-                      <div style={{
-                        padding: '12px 16px',
-                        borderRadius: '12px',
-                        backgroundColor: item.role === 'user' ? '#4f46e5' : '#ffffff',
-                        color: item.role === 'user' ? '#ffffff' : '#1e293b',
-                        boxShadow: item.role === 'user' 
-                          ? '0 4px 6px -1px rgba(79, 70, 229, 0.15)' 
-                          : '0 4px 6px -1px rgba(0, 0, 0, 0.03), 0 2px 4px -2px rgba(0, 0, 0, 0.03)',
-                        border: item.role === 'user' ? 'none' : '1px solid #f1f5f9',
-                        whiteSpace: 'pre-wrap',
-                        fontSize: '14px',
-                        lineHeight: '1.6'
-                      }}>
-                        {item.content}
+                      <div>
+                        <div style={{
+                          padding: '12px 16px',
+                          borderRadius: '12px',
+                          backgroundColor: item.role === 'user' ? '#4f46e5' : '#ffffff',
+                          color: item.role === 'user' ? '#ffffff' : '#1e293b',
+                          boxShadow: item.role === 'user' 
+                            ? '0 4px 6px -1px rgba(79, 70, 229, 0.15)' 
+                            : '0 4px 6px -1px rgba(0, 0, 0, 0.03), 0 2px 4px -2px rgba(0, 0, 0, 0.03)',
+                          border: item.role === 'user' ? 'none' : '1px solid #f1f5f9',
+                          whiteSpace: 'pre-wrap',
+                          fontSize: '14px',
+                          lineHeight: '1.6'
+                        }}>
+                          {item.content}
+                          {item.isStreaming && (
+                            <LoadingOutlined style={{ marginLeft: '6px', color: '#94a3b8' }} />
+                          )}
+                        </div>
+                        {item.role === 'assistant' && renderStrategyBadge(item.strategy)}
                       </div>
                     </Space>
                   </div>
@@ -451,7 +564,7 @@ function App() {
                   }}
                   placeholder="Задайте ваш вопрос..."
                   autoSize={{ minRows: 1, maxRows: 5 }}
-                  bordered={false}
+                  variant="borderless"
                   style={{ 
                     flex: 1, 
                     resize: 'none', 
