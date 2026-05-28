@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Layout, Input, Button, List, Avatar, Space, Typography, Badge, ConfigProvider, Tooltip, Tag } from 'antd';
-import { 
-  SendOutlined, 
-  UserOutlined, 
-  RobotOutlined, 
-  PlusOutlined, 
+import {
+  SendOutlined,
+  UserOutlined,
+  RobotOutlined,
+  PlusOutlined,
   DeleteOutlined,
   MessageOutlined,
   LockOutlined,
@@ -62,12 +62,12 @@ type WSMessage = WSStrategyMessage | WSTokenMessage | WSMetadataMessage | WSErro
 // ──────────────────── Strategy Visuals ────────────────────
 
 const STRATEGY_META: Record<string, { color: string; label: string }> = {
-  ALLOW:    { color: 'success',    label: 'Разрешено' },
-  SOFTEN:   { color: 'processing', label: 'Смягчение' },
-  CAUTION:  { color: 'warning',    label: 'Предупреждение' },
-  CLARIFY:  { color: 'blue',       label: 'Уточнение' },
-  REDIRECT: { color: 'purple',     label: 'Перенаправление' },
-  REFUSE:   { color: 'error',      label: 'Отказ' },
+  ALLOW: { color: 'success', label: 'Разрешено' },
+  SOFTEN: { color: 'processing', label: 'Смягчение' },
+  CAUTION: { color: 'warning', label: 'Предупреждение' },
+  CLARIFY: { color: 'blue', label: 'Уточнение' },
+  REDIRECT: { color: 'purple', label: 'Перенаправление' },
+  REFUSE: { color: 'error', label: 'Отказ' },
 };
 
 // ────────────────────── Theme ──────────────────────────────
@@ -97,16 +97,11 @@ const clientTheme: ThemeConfig = {
 
 // ────────────────────── Constants ─────────────────────────
 
-const INITIAL_MESSAGE: ChatMessage = {
-  role: 'assistant',
-  content: 'Привет! Я ваш корпоративный ИИ-ассистент. Моя работа защищена адаптивным контекстным шлюзом безопасности. Напишите ваш запрос, и я постараюсь помочь вам в рамках правил безопасности организации.'
-};
-
 function createDefaultSession(): ChatSession {
   return {
     id: Date.now().toString(),
     title: 'Новый диалог',
-    messages: [INITIAL_MESSAGE]
+    messages: []
   };
 }
 
@@ -160,7 +155,8 @@ function App(): React.ReactElement {
     const connectWs = () => {
       if (!isMounted) return;
 
-      const socket = new WebSocket('ws://127.0.0.1:8000/api/v1/chat/ws');
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+      const socket = new WebSocket(`${wsProtocol}${window.location.hostname}:8000/api/v1/chat/ws`);
 
       socket.onopen = () => {
         console.log('WebSocket connected');
@@ -253,7 +249,7 @@ function App(): React.ReactElement {
       if (session.id === activeSessionId) {
         const updatedMsgs: ChatMessage[] = [...session.messages, { role: 'user', content: userText }];
         let title = session.title;
-        if (session.title === 'Новый диалог' && session.messages.length === 1) {
+        if (session.title === 'Новый диалог' && session.messages.length === 0) {
           title = userText.slice(0, 24) + (userText.length > 24 ? '...' : '');
         }
         return { ...session, title, messages: updatedMsgs };
@@ -346,10 +342,10 @@ function App(): React.ReactElement {
           }}
         >
           <div style={{ padding: '20px 16px', borderBottom: '1px solid #f1f5f9' }}>
-            <Button 
-              type="primary" 
-              icon={<PlusOutlined />} 
-              block 
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              block
               onClick={createNewSession}
               style={{
                 height: '40px',
@@ -365,7 +361,7 @@ function App(): React.ReactElement {
             <List
               dataSource={sessions}
               renderItem={(item: ChatSession) => (
-                <div 
+                <div
                   onClick={() => setActiveSessionId(item.id)}
                   style={{
                     padding: '12px',
@@ -382,9 +378,9 @@ function App(): React.ReactElement {
                 >
                   <Space style={{ minWidth: 0, overflow: 'hidden' }}>
                     <MessageOutlined style={{ flexShrink: 0 }} />
-                    <Text 
-                      strong={item.id === activeSessionId} 
-                      style={{ 
+                    <Text
+                      strong={item.id === activeSessionId}
+                      style={{
                         color: item.id === activeSessionId ? '#4f46e5' : '#475569',
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
@@ -397,10 +393,10 @@ function App(): React.ReactElement {
                     </Text>
                   </Space>
                   <Tooltip title="Удалить диалог">
-                    <Button 
-                      type="text" 
-                      size="small" 
-                      icon={<DeleteOutlined />} 
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<DeleteOutlined />}
                       onClick={(e) => deleteSession(item.id, e)}
                       style={{
                         color: item.id === activeSessionId ? '#4f46e5' : '#94a3b8',
@@ -412,9 +408,9 @@ function App(): React.ReactElement {
             />
           </div>
 
-          <div style={{ 
-            padding: '16px', 
-            borderTop: '1px solid #f1f5f9', 
+          <div style={{
+            padding: '16px',
+            borderTop: '1px solid #f1f5f9',
             backgroundColor: '#fafafa',
             margin: '8px',
             borderRadius: '8px'
@@ -438,12 +434,12 @@ function App(): React.ReactElement {
 
         <Layout style={{ flex: 1, minWidth: 0 }}>
           {/* Header */}
-          <Header 
-            style={{ 
-              padding: '0 24px', 
-              borderBottom: '1px solid #e2e8f0', 
-              display: 'flex', 
-              alignItems: 'center', 
+          <Header
+            style={{
+              padding: '0 24px',
+              borderBottom: '1px solid #e2e8f0',
+              display: 'flex',
+              alignItems: 'center',
               justifyContent: 'space-between',
               boxShadow: '0 1px 2px 0 rgba(0,0,0,0.03)'
             }}
@@ -456,7 +452,7 @@ function App(): React.ReactElement {
                 </Title>
               </div>
             </Space>
-            
+
             <Space size="small">
               <Badge status="success" />
               <Text style={{ fontSize: '13px', color: '#64748b' }}>
@@ -467,9 +463,9 @@ function App(): React.ReactElement {
 
           {/* Chat Content Area */}
           <Content style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)' }}>
-            <div style={{ 
-              flex: 1, 
-              overflowY: 'auto', 
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
               padding: '24px 24px 12px 24px',
               maxWidth: '850px',
               width: '100%',
@@ -484,29 +480,29 @@ function App(): React.ReactElement {
                     : [])
                 ]}
                 renderItem={(item: ChatMessage) => (
-                  <div 
-                    style={{ 
+                  <div
+                    style={{
                       display: 'flex',
                       justifyContent: item.role === 'user' ? 'flex-end' : 'flex-start',
                       marginBottom: '20px',
                       animation: 'fadeIn 0.25s ease-out forwards'
                     }}
                   >
-                    <Space 
-                      align="start" 
+                    <Space
+                      align="start"
                       size="middle"
-                      style={{ 
-                        maxWidth: '80%', 
-                        flexDirection: item.role === 'user' ? 'row-reverse' : 'row' 
+                      style={{
+                        maxWidth: '80%',
+                        flexDirection: item.role === 'user' ? 'row-reverse' : 'row'
                       }}
                     >
-                      <Avatar 
-                        icon={item.role === 'user' ? <UserOutlined /> : <RobotOutlined />} 
-                        style={{ 
+                      <Avatar
+                        icon={item.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
+                        style={{
                           backgroundColor: item.role === 'user' ? '#e0e7ff' : '#4f46e5',
                           color: item.role === 'user' ? '#4f46e5' : '#ffffff',
                           flexShrink: 0
-                        }} 
+                        }}
                       />
                       <div>
                         <div style={{
@@ -514,8 +510,8 @@ function App(): React.ReactElement {
                           borderRadius: '12px',
                           backgroundColor: item.role === 'user' ? '#4f46e5' : '#ffffff',
                           color: item.role === 'user' ? '#ffffff' : '#1e293b',
-                          boxShadow: item.role === 'user' 
-                            ? '0 4px 6px -1px rgba(79, 70, 229, 0.15)' 
+                          boxShadow: item.role === 'user'
+                            ? '0 4px 6px -1px rgba(79, 70, 229, 0.15)'
                             : '0 4px 6px -1px rgba(0, 0, 0, 0.03), 0 2px 4px -2px rgba(0, 0, 0, 0.03)',
                           border: item.role === 'user' ? 'none' : '1px solid #f1f5f9',
                           whiteSpace: 'pre-wrap',
@@ -537,15 +533,15 @@ function App(): React.ReactElement {
             </div>
 
             {/* Input Bar */}
-            <div style={{ 
-              padding: '12px 24px 24px 24px', 
+            <div style={{
+              padding: '12px 24px 24px 24px',
               maxWidth: '850px',
               width: '100%',
               margin: '0 auto',
               boxSizing: 'border-box'
             }}>
-              <div style={{ 
-                display: 'flex', 
+              <div style={{
+                display: 'flex',
                 backgroundColor: '#ffffff',
                 border: '1px solid #e2e8f0',
                 borderRadius: '12px',
@@ -565,9 +561,9 @@ function App(): React.ReactElement {
                   placeholder="Задайте ваш вопрос..."
                   autoSize={{ minRows: 1, maxRows: 5 }}
                   variant="borderless"
-                  style={{ 
-                    flex: 1, 
-                    resize: 'none', 
+                  style={{
+                    flex: 1,
+                    resize: 'none',
                     padding: '8px',
                     fontSize: '14px',
                     lineHeight: '1.5'
