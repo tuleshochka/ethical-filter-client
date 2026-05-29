@@ -407,29 +407,6 @@ function App(): React.ReactElement {
               )}
             />
           </div>
-
-          <div style={{
-            padding: '16px',
-            borderTop: '1px solid #f1f5f9',
-            backgroundColor: '#fafafa',
-            margin: '8px',
-            borderRadius: '8px'
-          }}>
-            <Space direction="vertical" size={2} style={{ width: '100%' }}>
-              <Text type="secondary" style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Безопасность
-              </Text>
-              <Space size={6} align="center">
-                <Badge status="processing" color="#10b981" />
-                <Text strong style={{ fontSize: '12px', color: '#1e293b' }}>
-                  Шлюз Guardrails активен
-                </Text>
-              </Space>
-              <Text type="secondary" style={{ fontSize: '11px', lineHeight: '1.2', display: 'block', marginTop: '4px' }}>
-                Контекст запросов фильтруется на сервере в режиме реального времени.
-              </Text>
-            </Space>
-          </div>
         </Sider>
 
         <Layout style={{ flex: 1, minWidth: 0 }}>
@@ -448,17 +425,11 @@ function App(): React.ReactElement {
               <LockOutlined style={{ fontSize: '20px', color: '#4f46e5' }} />
               <div>
                 <Title level={4} style={{ margin: 0, color: '#0f172a', fontWeight: 700, fontSize: '15px' }}>
-                  Безопасный корпоративный ассистент
+                  ИИ ассистент
                 </Title>
               </div>
             </Space>
 
-            <Space size="small">
-              <Badge status="success" />
-              <Text style={{ fontSize: '13px', color: '#64748b' }}>
-                Защищенный VPN контур
-              </Text>
-            </Space>
           </Header>
 
           {/* Chat Content Area */}
