@@ -129,6 +129,7 @@ function App(): React.ReactElement {
   const wsRef = useRef<WebSocket | null>(null);
   const activeSessionIdRef = useRef(activeSessionId);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const streamingContentRef = useRef<string>('');
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? sessions[0];
 
@@ -169,30 +170,32 @@ function App(): React.ReactElement {
           setCurrentStrategy((data as WSStrategyMessage).strategy);
         }
         else if (data.type === 'token') {
+          const tokenContent = (data as WSTokenMessage).content;
+          streamingContentRef.current += tokenContent;
           setStreamingMessage(prev =>
-            prev === null ? (data as WSTokenMessage).content : prev + (data as WSTokenMessage).content
+            prev === null ? tokenContent : prev + tokenContent
           );
         }
         else if (data.type === 'metadata') {
           const meta = data as WSMetadataMessage;
-          setStreamingMessage(currentStream => {
-            if (currentStream !== null) {
-              setSessions(prevSessions => prevSessions.map(session => {
-                if (session.id === activeSessionIdRef.current) {
-                  return {
-                    ...session,
-                    messages: [...session.messages, {
-                      role: 'assistant' as const,
-                      content: currentStream,
-                      strategy: meta.strategy,
-                    }]
-                  };
-                }
-                return session;
-              }));
-            }
-            return null;
-          });
+          const content = streamingContentRef.current;
+          if (content) {
+            setSessions(prevSessions => prevSessions.map(session => {
+              if (session.id === activeSessionIdRef.current) {
+                return {
+                  ...session,
+                  messages: [...session.messages, {
+                    role: 'assistant' as const,
+                    content,
+                    strategy: meta.strategy,
+                  }]
+                };
+              }
+              return session;
+            }));
+          }
+          setStreamingMessage(null);
+          streamingContentRef.current = '';
           setIsSending(false);
           setCurrentStrategy(null);
         }
@@ -210,6 +213,7 @@ function App(): React.ReactElement {
           }));
           setIsSending(false);
           setStreamingMessage(null);
+          streamingContentRef.current = '';
           setCurrentStrategy(null);
         }
       };
@@ -243,6 +247,7 @@ function App(): React.ReactElement {
     setInputVal('');
     setIsSending(true);
     setStreamingMessage('');
+    streamingContentRef.current = '';
 
     // Add user message to session
     setSessions(prev => prev.map(session => {
