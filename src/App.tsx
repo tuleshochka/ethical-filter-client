@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Layout, Input, Button, List, Avatar, Space, Typography, Badge, ConfigProvider, Tooltip, Tag } from 'antd';
+import { Layout, Input, Button, List, Avatar, Space, Typography, Badge, ConfigProvider, Tooltip, Tag, Modal, message, Alert } from 'antd';
 import {
   SendOutlined,
   UserOutlined,
@@ -125,6 +125,41 @@ function App(): React.ReactElement {
   const [currentStrategy, setCurrentStrategy] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
 
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('chat_token'));
+  const [passwordModalOpen, setPasswordModalOpen] = useState(!token);
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  const handleLogin = async () => {
+    setLoggingIn(true);
+    setLoginError(null);
+    try {
+      const response = await fetch(`http://${window.location.hostname}:8000/api/v1/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password }),
+      });
+      if (response.ok) {
+        const json = await response.json();
+        localStorage.setItem('chat_token', json.token);
+        setToken(json.token);
+        setPasswordModalOpen(false);
+        message.success('Успешная авторизация!');
+      } else {
+        const errJson = await response.json();
+        setLoginError(errJson.detail || 'Неверный пароль');
+      }
+    } catch (err) {
+      console.error(err);
+      setLoginError('Сбой сети при авторизации');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
   // Refs for stable WebSocket access
   const wsRef = useRef<WebSocket | null>(null);
   const activeSessionIdRef = useRef(activeSessionId);
@@ -154,10 +189,10 @@ function App(): React.ReactElement {
     let isMounted = true;
 
     const connectWs = () => {
-      if (!isMounted) return;
+      if (!isMounted || !token) return;
 
       const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-      const socket = new WebSocket(`${wsProtocol}${window.location.hostname}:8000/api/v1/chat/ws`);
+      const socket = new WebSocket(`${wsProtocol}${window.location.hostname}:8000/api/v1/chat/ws?token=${token}`);
 
       socket.onopen = () => {
         console.log('WebSocket connected');
@@ -218,13 +253,17 @@ function App(): React.ReactElement {
         }
       };
 
-      socket.onclose = () => {
-        console.log('WebSocket disconnected, retrying in 3s...');
-        if (isMounted) {
+      socket.onclose = (event) => {
+        console.log('WebSocket disconnected, code:', event.code);
+        if (event.code === 1008) {
+          localStorage.removeItem('chat_token');
+          setToken(null);
+          setPasswordModalOpen(true);
+        } else if (isMounted) {
           reconnectTimeout = setTimeout(connectWs, 3000);
         }
       };
-
+ 
       wsRef.current = socket;
     };
 
@@ -236,7 +275,7 @@ function App(): React.ReactElement {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, []); // ← Empty deps: single WS for entire app lifecycle
+  }, [token]); // ← Reconnect when token changes
 
   // ─── Handlers ───
 
@@ -573,6 +612,45 @@ function App(): React.ReactElement {
           </Content>
         </Layout>
       </Layout>
+      <Modal
+        title={
+          <Space>
+            <LockOutlined style={{ color: '#4f46e5' }} />
+            <span>Авторизация в этическом шлюзе</span>
+          </Space>
+        }
+        open={passwordModalOpen}
+        closable={false}
+        footer={null}
+        centered
+        width={400}
+      >
+        <Space direction="vertical" style={{ width: '100%', marginTop: '12px' }} size="middle">
+          <Text type="secondary">
+            Для установки безопасного WebSocket-соединения с ИИ-ассистентом требуется ввести пароль доступа (admin/auditor).
+          </Text>
+          <Input.Password
+            placeholder="Введите пароль доступа"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onPressEnter={handleLogin}
+            disabled={loggingIn}
+            size="large"
+          />
+          {loginError && <Alert type="error" message={loginError} showIcon />}
+          <Button
+            type="primary"
+            onClick={handleLogin}
+            loading={loggingIn}
+            disabled={!password}
+            block
+            size="large"
+            style={{ backgroundColor: '#4f46e5' }}
+          >
+            Войти и подключиться
+          </Button>
+        </Space>
+      </Modal>
     </ConfigProvider>
   );
 }
